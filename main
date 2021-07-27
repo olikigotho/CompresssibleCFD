@@ -1,0 +1,611 @@
+%% Elementary Computational Fluid Dynamics: Part 3:Compressible Viscous
+
+%This code runs the finite difference method to solve the incompressible
+%viscous Navier-Stokes in a two dimenstional
+%square. There is a pressure difference between the left and right walls
+
+%This solver uses the non-dimensional form of the equations
+format short
+clc
+clear
+%% The Variables
+%define how much time should be simulated
+sim_time = 5; %time in seconds
+settle = 10;
+
+%define the geometry of the square and flow
+Lx = 0.05; %characteristic length in meters, length of the width
+Ly = 0.05; %characteristic length in meters, of the height
+U = 0.001; %characteristic velocity in the flow
+RHO = 1.225 * 0.962; %characteristic density of the flow in kg/m^3
+G = 9.81; % characteristic gravitation acceleration in the flow in m/s^2
+mu = 1.81 * 10^-5; %viscousity
+cp = 1000; %Specific heat capacity
+r = 287; %Gas Constant
+k = 24.35 * 10^-1; %thermal conductivity
+
+%Define the size of the grid
+dx = 0.1; % dimensionless as a percentage of smaller of the height or width
+
+%Define timestep
+dt = 0.1; % dimensionless as a percentage of characteristic time.
+
+%Define the number of decimal places before truncation
+trunc = 9;
+
+%Define Boudary conditions (all bvelocities in m/s) 
+%(usually constrained to zero for no slip condition)d
+u_top = 0; % x-velocity on the top boundary
+u_bottom = 0; % x-velocity on the bottom boudary
+u_left =  0; % x - velocity on the left boundary
+u_right = 0; % x - velocity on the right boundary
+
+v_top = 0; % y - velocity on the top boundary
+v_bottom = 0; % y -velocity on the bottom boudary
+v_left =  0; % y - velocity on the left boundary
+v_right = 0; % y - velocity on the right boundary
+
+T_top = 300; % y - Temperature on the top boundary
+T_bottom = 300; % y - Temperature on the bottom boudary
+T_left =  300; % y - Temperature on the left boundary
+T_right = 300; % y - Temperature on the right boundary
+
+%Define the conductivies of the boundaries
+%Values of iron
+ktop = 79.5;
+kbottom = 79.5;
+kleft = 79.5;
+kright = 79.5;
+
+%Define Initial Conditions
+u = 0; % x - velocity inside the domain
+v = 0; % y - velocity inside the domain
+p = 101325; % atmospheric pressure
+T = 300; % - tempreature inside the domain
+
+Tmidbottom = 305;
+
+
+
+%% Create the Non-Dimensional Matrices
+%define the dimesions of the matrix that needs to be solved
+if Lx < Ly
+    xrowsize = round(1/dx);
+    yrowsize = round(Ly/(Lx * dx)); 
+else
+    xrowsize = round(Lx/(Ly * dx));
+    yrowsize = round(1/dx);
+end
+
+%Define the number of variables to be solved for
+numval = 4;
+
+%create a dimensionless grid of the domain 
+x = dx * ((1/2):(xrowsize -1/2));
+y = dx * ((1/2):(yrowsize -1/2));
+[X,Y] = meshgrid(x,y);
+
+%Create the Reynolds Number
+if Lx < Ly
+    Re = (RHO * U * Lx)/mu;
+else
+    Re = (RHO * U * Ly)/mu;
+end
+
+%Create the Prandtl Number
+Pr = mu*cp/k;
+
+%create dimensionless gravity
+if Lx < Ly  
+    g = G * Lx/U^2;
+else
+    g = G * Ly/U^2;
+end
+
+%Create dimensionless gas constant
+R = r/cp;
+
+%dimensionless temperature
+T = cp/U^2 * T;
+
+%create the dimensionless conductivity rations
+krattop = ktop/k;
+kratbottom = kbottom/k;
+kratleft = kleft/k;
+kratright = kright/k;
+
+%Greate dimensionless density and pressure
+P = zeros(yrowsize,xrowsize);
+for yindex = 1:yrowsize
+    P(yrowsize + 1 - yindex,:) = (g * (yindex - 1) * dx + p/(RHO * U^2))...
+        .* ones(1,xrowsize);
+end
+rho = P./(R * T);
+for index = 1:1000
+    for yindex = 1:yrowsize
+        P(yindex,:) = (g * sum(rho(yindex:end,1)) * dx + p/(RHO * U^2))...
+            .* ones(1,xrowsize);
+    end
+    rho = P./(R * T);
+end
+
+%Create the dimensionless Temperature
+Ttop = cp/U^2* T_top ; % y - Temperature on the top boundary
+Tbottom = cp/U^2 * T_bottom ; % y - Temperature on the bottom boudary
+Tleft = cp/U^2 * T_left; % y - Temperature on the left boundary
+Tright = cp/U^2 * T_right; % y - Temperature on the right boundary
+
+%This loop finds the correct starting density
+%while abs(mean(mean((abs(a))) - mean(mean(abs(b))))) > 10^-5
+
+
+%create a dimesionless time vector
+if Lx < Ly
+    simtime = 0:dt:U/(Lx) * sim_time;
+else
+    simtime = 0:dt:U/(Ly) * sim_time;
+end
+
+%create nondimensional initial conditions
+Values = zeros(yrowsize,xrowsize,numval,length(simtime));
+Values(:,:,1,1) = rho; % mass
+Values(:,:,2,1) = rho .* u/U .* ones(yrowsize,xrowsize); %x - momentum
+Values(:,:,3,1) = rho .* v/U .* ones(yrowsize,xrowsize); % y - momentum
+Values(:,:,4,1) = energy(Values(:,:,:,1),P,R);
+
+%define nonsimenstional boudary conditions
+top = zeros(xrowsize,numval);
+bottom = zeros(xrowsize,numval);
+left = zeros(yrowsize,numval);
+right = zeros(yrowsize,numval);
+
+top(:,1) = (P(end,:) + (P(end,:) - P(end-1,:))/2 )./(R * Ttop);
+top(:,2) = u_top/U * ones(1,xrowsize);
+top(:,3) = v_top/U * ones(1,xrowsize);
+top(:,4) = energy(Values(end,:,:,1),rho(end,:)* R*Ttop,R);
+
+bottom(:,1) = (P(1,:) -(P(2,:) - P(1,:))/2)./(R * Tbottom);
+bottom(:,2) = u_bottom/U * ones(1,xrowsize);
+bottom(:,3) = v_bottom/U * ones(1,xrowsize);
+bottom(:,4) = energy(Values(1,:,:,1),rho(1,:)*R.*Tbottom,R);
+
+left(:,1) = P(:,1)./(R * Tleft);
+left(:,2) = u/U * ones(1,yrowsize);
+left(:,3) = v_left/U * ones(1,yrowsize);
+left(:,4) = energy(Values(:,1,:,1),rho(:,1)*R.*Tleft,R);
+
+right(:,1) = P(:,end)./(R * Tright);
+right(:,2) = u/U * ones(1,yrowsize);
+right(:,3) = v_right/U * ones(1,yrowsize);
+right(:,4) = energy(Values(:,end,:,1),rho(:,end)*R.*Tright,R);
+
+Tbottom = Tbottom * ones(xrowsize,1);
+
+% clear variables that aren't going to be used again as not to get confused
+% later
+clear p v u u_bottom u_top v_top v_bottom ...
+    v_left v_right p_left p_right sim_time r T_Left T_right T_top T_bottom
+%% Solve the Equations
+for tindex = 1:length(simtime)/settle
+    M = Values(:,:,:,tindex);
+    [M,top,bottom,left,right] = rkmethod(xrowsize,yrowsize,...
+        top,bottom,left,Ttop,Tleft,Tbottom,Tright,right,...
+        krattop,kratbottom,kratleft,kratright,...
+        M,x,y,dx,g,dt,Re,Pr,R,trunc,numval);
+    Values(:,:,:,tindex + 1) = M;
+    disp(tindex)
+end
+for index = 1:xrowsize
+    if index > xrowsize/4
+        if index < 3 * xrowsize/4
+            Tbottom(index) = cp/U^2 * Tmidbottom;
+        end
+    end    
+end
+disp('settled')
+Values2(:,:,:) = Values(:,:,:,round(length(simtime)/settle));
+clear Values
+Values = zeros(yrowsize,xrowsize,numval,length(simtime));
+Values(:,:,:,1) = Values2;
+for tindex = 1:length(simtime)
+    M = Values(:,:,:,tindex);
+    [M,top,bottom,left,right] = rkmethod(xrowsize,yrowsize,...
+        top,bottom,left,Ttop,Tleft,Tbottom,Tright,right,...
+        krattop,kratbottom,kratleft,kratright,...
+        M,x,y,dx,g,dt,Re,Pr,R,trunc,numval);
+    Values(:,:,:,tindex + 1) = M;
+    disp(tindex)
+end
+%% Plot the data
+figure(1)
+clf
+hold on
+
+for tindex = 1:length(simtime)
+    %Calulate the temperature
+    Temp = Values(:,:,4,tindex) - 1/2 *...
+        sqrt((Values(:,:,2,tindex)).^2 + (Values(:,:,3,tindex)).^2);
+    P = Values(:,:,1,tindex) * R .* Temp;
+    %Plot the dimensionless density
+    subplot (3,2,1)
+    imagesc(flip(Values(:,:,1,tindex)))
+    title('dimensionless density')
+    xlabel('dimensionless x-location')
+    ylabel('dimensionless y-location')
+    colorbar
+    %Plot the dimensionless pressure
+    subplot (3,2,2)
+    imagesc(flip(P))
+    title('dimensionless pressure')
+    xlabel('dimensionless x-location')
+    ylabel('dimensionless y-location')
+    colorbar
+    %Plot the dimensionless Temperature
+    subplot (3,2,3)
+    imagesc(flip(Temp))
+    title('dimensionless temperature')
+    xlabel('dimensionless x-location')
+    ylabel('dimensionless y-location')
+    colorbar
+    %Plot the dimensionless x velocity
+    subplot (3,2,4)
+    imagesc(flip(Values(:,:,2,tindex)))
+    title('x-direction dimensionless velocity')
+    xlabel('dimensionless x-location')
+    ylabel('dimensionless y-location')
+    colorbar
+    %plot the dimensionless y velocity
+    subplot (3,2,5)
+    imagesc(flip(Values(:,:,3,tindex)))
+    title('y-direction dimensionless velocity')
+    xlabel('dimensionless x-location')
+    ylabel('dimensionless y-location')
+    colorbar
+    %plot the dimensionless velocity magnitude
+    subplot (3,2,6)
+    quiver(X,Y,Values(:,:,2,tindex),Values(:,:,3,tindex))
+    title('dimensionless velocity')
+    xlabel('dimensionless x-location')
+    ylabel('dimensionless y-location')
+    colorbar
+    if Lx < Ly  
+        pause(0.001 * dt *Lx/U)
+    else
+        pause(0.001 * dt *Ly/U)
+    end        
+end
+hold off
+
+%% ------------------------------------------------------------------------
+% Functions
+%--------------------------------------------------------------------------
+%% Fourth-Order Runge-Kutta Method
+
+%This function uses the fourth-order Runge-Kutta method to sovle
+%returns the new quantities M, and the values at the left and right
+%boudaries
+function [M,top,bottom,left,right] = rkmethod(xrowsize,yrowsize,...
+        top,bottom,left,Ttop,Tleft,Tbottom,Tright,right,...
+        krattop,kratbottom,kratleft,kratright,...
+        M,x,y,dx,g,dt,Re,Pr,R,trunc,numval)
+
+%Repeat Eulers method 4 times to determine the gradients
+[dMdt1,top1,bottom1,left1,right1] = euler(xrowsize,yrowsize,...
+        top,bottom,left,right,Ttop,Tleft,Tbottom,Tright,...
+        krattop,kratbottom,kratleft,kratright,...
+        M,x,y,dx,g,Re,Pr,R,trunc,numval);
+M1 = M + dMdt1 * dt/2;
+[dMdt2,top2,bottom2,left2,right2] = euler(xrowsize,yrowsize,...
+        top1,bottom1,left1,right1,Ttop,Tleft,Tbottom,Tright,...
+        krattop,kratbottom,kratleft,kratright,...
+        M1,x,y,dx,g,Re,Pr,R,trunc,numval);   
+M2 = M + dMdt2 * dt/2;
+[dMdt3,top3,bottom3,left3,right3] = euler(xrowsize,yrowsize,...
+        top2,bottom2,left2,right2,Ttop,Tleft,Tbottom,Tright,...
+        krattop,kratbottom,kratleft,kratright,...
+        M2,x,y,dx,g,Re,Pr,R,trunc,numval);  
+M3 = M + dMdt2 * dt;
+[dMdt4,top4,bottom4,left4,right4] = euler(xrowsize,yrowsize,...
+        top3,bottom3,left3,right3,Ttop,Tleft,Tbottom,Tright,...
+        krattop,kratbottom,kratleft,kratright,...
+        M3,x,y,dx,g,Re,Pr,R,trunc,numval);
+%Weighted Average
+M = M + round(dt/6 * (dMdt1 + 2 * dMdt2 + 2 * dMdt3 + dMdt4),trunc);
+%change boundary condition at open section
+top(:,1) = (top4(:,1) + 2 * top3(:,1)...
+    + 2 * top2(:,1) + top1(:,1))/6;
+bottom(:,1) = (bottom1(:,1) + 2 * bottom2(:,1)...
+    + 2 * bottom3(:,1) + bottom4(:,1))/6;
+left(:,1) = (left1(:,1) + 2 * left2(:,1)...
+    + 2 * left3(:,1) + left4(:,1))/6;
+right(:,1) = (right1(:,1) + 2 * right2(:,1)....
+    + 2 * right3(:,1) + right4(:,1))/6;
+
+end
+
+%% Funtion to run Eulers Method
+function [dMdt,top,bottom,left,right] = euler(xrowsize,yrowsize,...
+        top,bottom,left,right,Ttop,Tleft,Tbottom,Tright,...
+        krattop,kratbottom,kratleft,kratright,...
+        Value,x,y,dx,g,Re,Pr,R,trunc,numval)
+%Each time, the new values at each wall of the cell have to be calcualted
+%using the following function
+[NS,EW] = splinefit(xrowsize,yrowsize,top,bottom,left,right,Value,x,y,dx);
+
+
+%Solve for the Temperature and grandients
+[TEWdx,TNSdy,T] = temperature(xrowsize,yrowsize,...
+    Ttop,Tbottom,Tleft,Tright,krattop,kratbottom,kratleft,kratright,...
+    Value,x,y,dx,trunc);
+
+%Calculate the rate of cunduction
+cond = zeros(yrowsize,xrowsize,numval);
+cond(:,:,4) = dx * (TNSdy(2:end,:) - TNSdy(1:end-1,:)...
+    + TEWdx(:,2:end) - TEWdx(:,1:end-1));
+
+%calculate the friction
+fric = zeros(yrowsize,xrowsize,numval);
+fric(:,:,4) = friction(NS,EW,xrowsize,yrowsize,top,...
+    bottom,left,right,Value,dx,trunc);
+
+%Calculate the pressure gradient, and pressures at boundaries
+[dp,PNS,PEW,P] = pressuregrad(xrowsize,yrowsize,top,...
+    bottom,left,right,Ttop,Tbottom,Tleft,Tright,...
+    Value,x,y,dx,R,T,numval,trunc);
+
+%Change the boundary values of the density
+top(:,1) = (P(end,:) + dp(end,:,3) * dx/2)./(R * Ttop);
+bottom(:,1) = (P(1,:) - dp(1,:,3) * dx /2) ./(R * Tbottom');
+left(:,1) = (P(:,1) - dp(:,1,2) * dx/2)./(R * Tleft);
+right(:,1) = (P(:,end) + dp(:,end,2) * dx /2)./(R * Tright);
+
+%Determin the viscous stresses
+[NStau,EWtau] = stress(NS,EW,xrowsize,yrowsize,top,...
+    bottom,left,right,Value,dx);
+tau = zeros(yrowsize,xrowsize,numval);
+tau(:,:,2) = NStau(2:end,:) - NStau(1:end-1,:);
+tau(:,:,3) = EWtau(:,2:end) - EWtau(:,1:end-1);
+
+%Add enthapies to be advected at the boundaries
+advecNS = NS;
+advecEW = EW;
+HNS = NS(:,:,4) + PNS./NS(:,:,1);
+HEW = EW(:,:,4) + PEW./EW(:,:,1);
+advecNS(:,:,4) = HNS;
+advecEW(:,:,4) = HEW;
+
+%Calculate the advection
+advec = spatial_gradients(advecNS,advecEW,trunc,dx);
+
+%calculate the body force
+b = zeros(yrowsize,xrowsize,numval);
+b(:,:,3) = - g * Value(:,:,1);
+
+%The transport equation for a finite gridcell is then used to caluclate the
+%change in each quantity within the gridcell per unit time 
+dMdt = 1/(Re * Pr) * cond;
+
+end
+%% Function to create Matricies ar the boundaries using splines
+function [NS,EW] = splinefit(xrowsize,yrowsize,...
+    top,bottom,left,right,M,x,y,dx)
+
+%make a matrix of the quantities at all the boundaries between gridcells
+NS = zeros(yrowsize + 1,xrowsize,length(M(1,1,:)));
+EW = zeros(yrowsize,xrowsize + 1,length(M(1,1,:)));
+
+%create the values at the boundary
+NS(end,:,:) = top;
+NS(1,:,:) = bottom;
+EW(:,1,:) = left;
+EW(:,end,:) = right;
+
+
+%internal locations
+xin = dx * (1:xrowsize-1);
+yin = dx * (1:yrowsize-1);
+
+%create the internal Value NS
+for xindex = 1:xrowsize
+    %create a 2d matrix of the values
+    yvalues = permute(M(:,xindex,:),[3 1 2 4]);
+    for yindex = 2:yrowsize
+        %fit a spline through the values to caluculate them at the boudary
+        NS(yindex,xindex,:) = ...
+            spline(y,yvalues,yin(yindex-1));
+    end 
+end
+%Create the internal vales EW
+for yindex = 1:yrowsize
+    %create a 2d matrix of the values
+    xvalues = permute(M(yindex,:,:),[3 2 1 4]);
+    for xindex = 2:xrowsize
+        %fit a spline through the values to caluculate them at the boudary
+        EW(yindex,xindex,:) = ...
+            spline(x,xvalues,xin(xindex-1));
+    end 
+end
+end
+%% Create the spacial gradients for the Material Derivative
+function [DValues] = spatial_gradients(NS,EW,trunc,dx)
+rhoEW = EW(:,:,1);
+rhoNS = NS(:,:,1);
+leftcarrier = EW(:,1:end-1,2)./rhoEW(:,1:end-1);
+rightcarrier = EW(:,2:end,2)./rhoEW(:,2:end);
+bottomcarrier = NS(1:end-1,:,3)./rhoNS(1:end-1,:);
+topcarrier = NS(2:end,:,3)./rhoNS(2:end,:);
+DValues = round(1/dx * (rightcarrier.* EW(:,2:end,:)...
+    - leftcarrier.* EW(:,1:end-1,:) ...
+    + topcarrier.* NS(2:end,:,:)...
+    - bottomcarrier.* NS(1:end-1,:,:)),trunc);
+end
+
+
+%% Create the viscous stresses
+% This function returns the shear stress on the NS and EW boundaries of the
+% each gridcell using the model of a Newtownian fluid
+function [NStau,EWtau] = stress(NS,EW,xrowsize,yrowsize,top,...
+    bottom,left,right,Value,dx)
+[NSdx, EWdx,NSdy, EWdy] = FCBdiff(NS,EW,xrowsize,yrowsize,top,...
+    bottom,left,right,Value,dx);
+NStau = NSdx(:,:,3) + NSdy(:,:,2); 
+EWtau = EWdx(:,:,3) + EWdy(:,:,2);
+end
+%% Create derivative values inside the domain
+
+%This functions returns the directional derivatives of the values at the NS 
+% and EW boundaries of the gridcells using the forwaard center backward
+% finite difference method
+function [NSdx, EWdx, NSdy, EWdy] = FCBdiff(NS,EW,xrowsize,yrowsize,top,...
+    bottom,left,right,Value,dx)
+
+NSdx = zeros(yrowsize + 1,xrowsize,length(NS(1,1,:)));
+EWdx = zeros(yrowsize,xrowsize + 1,length(EW(1,1,:)));
+NSdy = zeros(yrowsize + 1,xrowsize,length(NS(1,1,:)));
+EWdy = zeros(yrowsize,xrowsize + 1,length(EW(1,1,:)));
+
+%solve for the values on the N E S W sides of each cell
+%Use forward-center-backward-difference method
+
+%Calculate change y derivatives at the NS boundaries of the gridcell
+for yindex = 1:yrowsize + 1
+    if yindex == 1 %forward
+    	NSdy(yindex,:,:) = (permute(Value(yindex,:,:),[2 3 1]) - bottom)...
+            /(1/2 *dx);
+    elseif yindex == yrowsize + 1 %backward
+        NSdy(yindex,:,:) = (top - permute(Value(yindex-1,:,:),[2 3 1]))...
+            /(1/2 * dx);
+    else %center
+        NSdy(yindex,:,:) = (permute(Value(yindex,:,:),[2 3 1])...
+            - permute(Value(yindex-1,:,:),[2 3 1]))/dx;
+    end
+end
+
+%Calculate change x derivatives at the NS boundaries of the gridcell
+for xindex = 1:xrowsize
+    if xindex == 1 %forward
+    	NSdx(:,xindex,:) = (NS(:,xindex + 1,:) - NS(:,xindex,:))...
+            /dx;
+    elseif xindex == xrowsize %backward
+        NSdx(:,xindex,:) = (NS(:,xindex,:) - NS(:,xindex - 1,:))/...
+            dx;
+    else %center
+        NSdx(:,xindex,:) = (NS(:,xindex + 1,:) - NS(:,xindex - 1,:))/(2 * dx);
+    end
+end 
+
+%Calculate change x derivatives at the EW boundaries of the gridcell
+for xindex = 1:xrowsize + 1
+    if xindex == 1 %forward
+    	EWdx(:,xindex,:) = (permute(Value(:,xindex,:),[1 3 2]) - left)...
+            /(2 * dx);
+    elseif xindex == xrowsize + 1 %backward
+        EWdx(:,xindex,:) = (right - permute(Value(:,xindex-1,:),[1 3 2]))/(2 * dx);
+    else %center
+        EWdx(:,xindex,:) = (permute(Value(:,xindex,:),[1 3 2])...
+            - permute(Value(:,xindex-1,:),[1 3 2]))/dx;
+    end
+end 
+
+%Calculate change y derivatives at the EW boundaries of the gridcell
+for yindex = 1:yrowsize
+    if yindex == 1 %forward
+    	EWdy(yindex,:,:) = (EW(yindex + 1,:,:) - EW(yindex,:,:))...
+            /dx;
+    elseif yindex == yrowsize %backward
+        EWdy(yindex,:,:) = (EW(yindex,:,:) - EW(yindex - 1,:,:))/...
+            dx;
+    else %center
+        EWdy(yindex,:,:) = (EW(yindex + 1,:,:) - EW(yindex - 1,:,:))/...
+            (2 * dx);
+    end
+end 
+end  
+%% Create the energy terms
+function [E] = energy(Value,P,R)
+rho = Value(:,:,1); %density
+velmag = sqrt((Value(:,:,2).^2 + Value(:,:,3).^2)); % velocity magnitude
+e = P./(R * rho); % internal energy
+E = e + 1/2 * velmag; % total internal energy
+end
+
+%% Calculate Pressure Gradients
+
+%This function calculates the pressure gradients in the 
+function [dp,PNS,PEW,P] = pressuregrad(xrowsize,yrowsize,top,...
+    bottom,left,right,...
+    Ttop,Tbottom,Tleft,Tright,Value,x,y,dx,R,T,numval,trunc)
+
+%Calculate the pressure in the interior
+P = Value(:,:,1) * R .* T;
+
+%Calculate the pressures at the boundaries
+Ptop = top(:,1) * R .* Ttop;
+Pbottom = bottom(:,1) * R .* Tbottom;
+Pleft = left(:,1) * R .* Tleft;
+Pright = right(:,1) * R .* Tright;
+
+%Find the pressure values at the edge using a spline
+[PNS,PEW] = splinefit(xrowsize,yrowsize,Ptop,Pbottom,Pleft,Pright...
+    ,P,x,y,dx);
+
+%make the pressure matrix
+dp = zeros(yrowsize,xrowsize,numval);
+
+%solve for the x direction pressure gradient
+dp(:,:,2) = (PEW(:,2:end) - PEW(:,1:end-1))/dx;
+
+%solve for the y direction pressure gradient
+dp(:,:,3) = (PNS(2:end,:) - PNS(1:end-1,:))/dx;
+dp = round(dp,trunc);
+end
+%% This function temperature matrix
+function [TEWdx,TNSdy,T] = temperature(xrowsize,yrowsize,...
+    Ttop,Tbottom,Tleft,Tright,krattop,kratbottom,kratleft,kratright,...
+    Value,x,y,dx,trunc)
+velmag = sqrt((Value(:,:,2).^2 + Value(:,:,3).^2));%velocity magnitude
+T = Value(:,:,4) - velmag; %Dimensionless of temperature
+
+[TNS,TEW] = splinefit(xrowsize,yrowsize,Ttop,Tbottom,Tleft,...
+    Tright,T,x,y,dx);
+
+[~,TEWdx,TNSdy,~] = FCBdiff(TNS,TEW,xrowsize,yrowsize,Ttop,...
+    Tbottom,Tleft,Tright,T,dx);
+
+%insert boundary conduction rates
+TNSdy(1,:) = kratbottom * TNSdy(1,:);
+TNSdy(end,:) = krattop * TNSdy(end,:);
+TEWdx(:,1) = kratleft * TEWdx(:,1);
+TEWdx(:,end) = kratright * TEWdx(:,end);
+
+TNSdy = round(TNSdy,trunc);
+TEWdx = round(TEWdx,trunc);
+end
+%% Solve for the frictional heat generation
+function [fric] = friction(NS,EW,xrowsize,yrowsize,top,...
+    bottom,left,right,Value,dx,trunc)
+
+%Calculate the velocity gradients
+[NSdx, EWdx,NSdy, EWdy] = FCBdiff(NS(:,:,2:3),EW(:,:,2:3),xrowsize,yrowsize,top(:,2:3),...
+    bottom(:,2:3),left(:,2:3),right(:,2:3),Value(:,:,2:3),dx);
+
+%calculate the shear stresses
+NStauxx = 2 * NSdx(:,:,1) - 2/3 * (NSdx(:,:,1) + NSdy(:,:,2));
+NStauxy = NSdx(:,:,2) + NSdy(:,:,1);
+EWtauyx = EWdx(:,:,2) + EWdy(:,:,1);
+EWtauyy = 2 * EWdy(:,:,2) - 2/3 * (EWdx(:,:,1) + EWdy(:,:,2));
+
+%Multiply the velocities by the shearing rate
+NSval = NS(:,:,2) .* NStauxx + NS(:,:,3) .* NStauxy;
+EWval = EW(:,:,2) .* EWtauyx + EW(:,:,3) .* EWtauyy;
+
+%Find the gradient to determine the frictional energy
+dxfric = (EWval(:,2:end) - EWval(:,1:end-1))/dx;
+dyfric = (NSval(2:end,:) - NSval(1:end-1,:))/dx;
+
+%return the friction
+fric = round(dxfric + dyfric,trunc);
+end
+
+
+%Make an Euler equation solver outside the RK method function
